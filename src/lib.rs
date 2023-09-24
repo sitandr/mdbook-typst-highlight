@@ -7,14 +7,47 @@ use mdbook::BookItem;
 use pulldown_cmark::{CodeBlockKind, CowStr, Event, Tag};
 use pulldown_cmark_to_cmark::cmark;
 use syntect::highlighting::Color;
+use lazy_static::lazy_static;
+use syntect::parsing::SyntaxSet;
 
 use syntect::easy::HighlightLines;
-use syntect::highlighting::ThemeSet;
+use syntect::highlighting::{ThemeSet, Theme};
 use syntect::html::{
     append_highlighted_html_for_styled_line, styled_line_to_highlighted_html, IncludeBackground,
 };
 use syntect::parsing::SyntaxSetBuilder;
 use syntect::util::LinesWithEndings;
+
+lazy_static! {
+    /// This is an example for using doc comment attributes
+    static ref THEME: Theme = {
+        let ts = ThemeSet::load_defaults();
+        let mut theme = ts.themes["Solarized (dark)"].clone();
+        theme.settings.foreground = Some(Color {
+            r: 27,
+            g: 223,
+            b: 51,
+            a: 99,
+        });
+        // The probality that the hack will break when you are writing colors is ≈ 1/(2⁸)⁴ ≈ 1/(2³²)
+        // In fact much less, very few people use alphas
+        
+        theme
+    };
+
+    static ref SYNTAX: SyntaxSet = {
+        let typst_syntax = syntect::parsing::syntax_definition::SyntaxDefinition::load_from_str(
+            include_str!("../res/Typst.sublime-syntax"),
+            true,
+            None,
+        ).expect("Syntax data was corrupted");
+    
+        let mut syntax = SyntaxSetBuilder::new();
+        syntax.add(typst_syntax);
+        let syntax_set = syntax.build();
+        syntax_set
+    };
+}
 
 pub struct TypstHighlight;
 
@@ -141,45 +174,20 @@ fn highlight(s: CowStr, inline: bool) -> Result<CowStr> {
         s.pop();
     }
 
-    let ts = ThemeSet::load_defaults();
-    let mut theme = ts.themes["Solarized (dark)"].clone();
+    let syntax = SYNTAX.syntaxes().first().unwrap();
 
-    theme.settings.background = Some(Color {
-        r: 32,
-        g: 32,
-        b: 32,
-        a: 0,
-    });
-    theme.settings.foreground = Some(Color {
-        r: 27,
-        g: 223,
-        b: 51,
-        a: 99,
-    });
-    // The probality that the hack will break when you are writing colors is ≈ 1/(2⁸)⁴ ≈ 1/(2³²)
-    // In fact much less, very few people use alphas
-
-    let typst_syntax = syntect::parsing::syntax_definition::SyntaxDefinition::load_from_str(
-        include_str!("../res/Typst.sublime-syntax"),
-        true,
-        None,
-    )?;
-    let mut syntax = SyntaxSetBuilder::new();
-    syntax.add(typst_syntax);
-    let syntax_set = syntax.build();
-    let syntax = syntax_set.syntaxes().first().unwrap();
     let mut html = if inline {
-        let mut h = HighlightLines::new(syntax, &theme);
-        let regs = h.highlight_line(s.as_ref(), &syntax_set)?;
+        let mut h = HighlightLines::new(syntax, &THEME);
+        let regs = h.highlight_line(s.as_ref(), &SYNTAX)?;
         let html = styled_line_to_highlighted_html(&regs[..], IncludeBackground::No)?;
         format!(r#"<code class="hljs">{}</code>"#, html)
     } else {
         let mut html = r#"<pre style="margin: 0"><code class="language-typ hljs">"#.into();
 
-        let mut highlighter = HighlightLines::new(syntax, &theme);
+        let mut highlighter = HighlightLines::new(syntax, &THEME);
 
         for line in LinesWithEndings::from(&s) {
-            let regions = highlighter.highlight_line(line, &syntax_set)?;
+            let regions = highlighter.highlight_line(line, &SYNTAX)?;
             append_highlighted_html_for_styled_line(
                 &regions[..],
                 IncludeBackground::No,

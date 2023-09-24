@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.75"
 clap = "4.4.4"
+lazy_static = "1.4.0"
 mdbook = { version = "0.4.34", default-features = false }
 pulldown-cmark = "0.9.3"
 pulldown-cmark-to-cmark = "11.0.0"
