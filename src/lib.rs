@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use lazy_static::lazy_static;
 use mdbook::book::Book;
 use mdbook::errors::{Error, Result};
 use mdbook::preprocess::{Preprocessor, PreprocessorContext};
@@ -7,11 +8,10 @@ use mdbook::BookItem;
 use pulldown_cmark::{CodeBlockKind, CowStr, Event, Tag};
 use pulldown_cmark_to_cmark::cmark;
 use syntect::highlighting::Color;
-use lazy_static::lazy_static;
 use syntect::parsing::SyntaxSet;
 
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{ThemeSet, Theme};
+use syntect::highlighting::{Theme, ThemeSet};
 use syntect::html::{
     append_highlighted_html_for_styled_line, styled_line_to_highlighted_html, IncludeBackground,
 };
@@ -31,7 +31,7 @@ lazy_static! {
         });
         // The probality that the hack will break when you are writing colors is ≈ 1/(2⁸)⁴ ≈ 1/(2³²)
         // In fact much less, very few people use alphas
-        
+
         theme
     };
 
@@ -41,11 +41,10 @@ lazy_static! {
             true,
             None,
         ).expect("Syntax data was corrupted");
-    
+
         let mut syntax = SyntaxSetBuilder::new();
         syntax.add(typst_syntax);
-        let syntax_set = syntax.build();
-        syntax_set
+        syntax.build()
     };
 }
 
