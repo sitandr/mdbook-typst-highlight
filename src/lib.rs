@@ -24,25 +24,26 @@ impl Preprocessor for TypstHighlight {
     }
 
     fn run(&self, ctx: &PreprocessorContext, mut book: Book) -> Result<Book, Error> {
-        let highlight_inline = ctx
+        let highlight_inline = !ctx
             .config
             .get_preprocessor(self.name())
-            .map(|typst_cfg| {
-                !typst_cfg["disable_inline"]
-                    .as_bool()
-                    .expect("Incorrect argument at disable_inline")
+            .and_then(|typst_cfg| {
+                typst_cfg
+                    .get("disable_inline")
+                    .map(|v| v.as_bool().expect("Incorrect argument at disable_inline"))
             })
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         let highlight_without_lang = ctx
             .config
             .get_preprocessor(self.name())
-            .map(|typst_cfg| {
-                !typst_cfg["highlight_without_lang"]
-                    .as_bool()
-                    .expect("Incorrect argument at disable_inline")
+            .and_then(|typst_cfg| {
+                typst_cfg.get("highlight_without_lang").map(|v| {
+                    v.as_bool()
+                        .expect("Incorrect argument at highlight_without_lang")
+                })
             })
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         book.sections.iter_mut().try_for_each(|section| {
             process_chapter(section, highlight_inline, highlight_without_lang)
@@ -85,7 +86,12 @@ fn process_chapter(
                     if is_typst_codeblock(&tag, highlight_without_lang) {
                         new_events.push(Event::Html(highlight(
                             codeblock_text
-                                .ok_or(anyhow!("Typst codeblock wasn't created"))?
+                                .ok_or(anyhow!(
+                                    "Typst codeblock wasn't created: chapter {}.
+                                    Data collected: {:?}",
+                                    chapter.name,
+                                    new_events
+                                ))?
                                 .into(),
                             false,
                         )?));
@@ -125,7 +131,7 @@ fn is_typst_codeblock(t: &Tag, highlight_without_lang: bool) -> bool {
             CodeBlockKind::Indented => true,
         }
     } else {
-        highlight_without_lang
+        highlight_without_lang && matches!(t, Tag::CodeBlock(_))
     }
 }
 
