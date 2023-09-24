@@ -100,9 +100,7 @@ fn process_chapter(
         })?;
 
         let events = new_cmark_parser(&chapter.content, false);
-
         let mut new_events = Vec::new();
-
         let mut codeblock_text = None;
 
         for event in events {
@@ -150,8 +148,8 @@ fn process_chapter(
         let mut buf = String::with_capacity(chapter.content.len());
         cmark(new_events.into_iter(), &mut buf)
             .map_err(|err| anyhow!("Markdown serialization failed: {}", err))?;
+
         chapter.content = buf;
-        // chapter.sub_items.iter_mut().for_each(|item| {item.clone()});
     }
     Ok(())
 }
