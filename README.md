@@ -1,4 +1,4 @@
-# MDBOOK-TYPST-HIGHLIGHT
+# mdbook-typst-highlight
 
 This is a preprocessor for [mdbook](https://github.com/rust-lang/mdBook) that uses [syntect](https://github.com/trishume/syntect) and [Typst syntax for Sublime Text](https://github.com/hyrious/typst-syntax-highlight/tree/main) to produce highlighted Typst code.
 
@@ -8,7 +8,7 @@ Here is an example of output:
 
 ## Usage
 
-Install using
+Install using `cargo`:
 
 ```bash
 cargo install --git https://github.com/sitandr/mdbook-typst-highlight
@@ -20,21 +20,21 @@ To add preprocessor to `mdbook`, add this to your `book.toml`:
 [preprocessor.typst-highlight]
 ```
 
-After it, run `mdbook build` or `serve`. That's it. All inline code and blocks with `typ`
+After it, run `mdbook build` or `serve`. That's it. All inline code and blocks with `typ` will be highlighted.
 
 ## Settings
 
-Currently there are only two setting available: 
+Currently there are only two settings available: 
 - Whether to highlight inline blocks (default is yes):
 
-```
+```toml
 [preprocessor.typst-highlight]
 disable_inline = true
 ```
 
-- Whether to highlight blocks without language specifiedЖ
+- Whether to highlight blocks without language specified:
 
-```
+```toml
 [preprocessor.typst-highlight]
 highlight_without_kind = true
 ```
