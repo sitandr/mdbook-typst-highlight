@@ -20,6 +20,9 @@ jobs:
             archive: zip
     steps:
       - uses: actions/checkout@master
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
       - name: Compile and release
         uses: rust-build/rust-build.action@v1.4.3
         env:
