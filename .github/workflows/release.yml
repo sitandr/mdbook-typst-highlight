@@ -7,7 +7,7 @@ on:
 jobs:
   release:
     name: release ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -34,9 +34,4 @@ jobs:
         with:
           RUSTTARGET: ${{ matrix.target }}
           ARCHIVE_TYPES: ${{ matrix.archive }}
-      - uses: ncipollo/release-action@v1.12.0
-        with:
-          artifacts: "mdbook-typst-highlight-${{ matrix.target }}.*"
-          allowUpdates: true
-          omitNameDuringUpdate: true
-          omitBodyDuringUpdate: true
+          TOOLCHAIN_VERSION: 1.72 # no idea why I have to write that
