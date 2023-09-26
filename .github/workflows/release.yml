@@ -1,8 +1,7 @@
-# .github/workflows/release.yml
-
 on:
   release:
     types: [created]
+  workflow_dispatch:
 
 jobs:
   release:
@@ -11,27 +10,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            cross: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            cross: false
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            cross: false
+        target: [x86_64-pc-windows-gnu, x86_64-unknown-linux-musl]
+    # x86_64-apple-darwin,
     steps:
       - uses: actions/checkout@master
-      - name: Update toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          target: ${{ matrix.target }}
       - name: Compile and release
-        uses: rust-build/rust-build.action@v1.4.3
+        uses: Douile/rust-build.action@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
           RUSTTARGET: ${{ matrix.target }}
-          ARCHIVE_TYPES: ${{ matrix.archive }}
-          TOOLCHAIN_VERSION: 1.72 # no idea why I have to write that
+          EXTRA_FILES: "README.md LICENSE config.yaml"
