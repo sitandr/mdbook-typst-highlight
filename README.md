@@ -38,3 +38,22 @@ disable_inline = true
 [preprocessor.typst-highlight]
 typst_default = true
 ```
+
+# Rendering
+
+To enable rendering, just add
+
+```toml
+[preprocessor.typst-highlight]
+render = true
+```
+
+_Important:_ the binary doesn't include Typst and itself. For rendering to work, you have to get _installed Typst in `PATH`_.
+
+Rendered looks like this:
+
+![Example](img/image_2.png)
+
+It comes with prelude that sets `width: 300pt`, `margin: 0.5cm` and `height: auto`. To disable it, add `typ-noprelude` as codeblock language.
+
+You can also disable certain blocks (but still highlight them) using `typ-norender`.
