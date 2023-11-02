@@ -57,3 +57,7 @@ Rendered looks like this:
 It comes with prelude that sets `width: 300pt`, `margin: 0.5cm` and `height: auto`. To disable it, add `typ-noprelude` as codeblock language.
 
 You can also disable certain blocks (but still highlight them) using `typ-norender`.
+
+## Caching
+
+To prevent recompiling large amount of files, all images are cached. To clear images, add `**/typst-src` and `**/typst-img` to `.gitignore` and then run `git clean -d -X -i` (I strictly advise using interactive mode just to make sure you don't delete something necessary).
