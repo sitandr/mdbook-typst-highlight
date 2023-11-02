@@ -169,7 +169,7 @@ fn process_chapter(
                                     !lang.contains("nopreambule"),
                                 );
 
-                                compile_errors.push(err);
+                                compile_errors.extend(err);
 
                                 html += format!(
                                     r#"<div style="
@@ -294,40 +294,44 @@ fn render_block(
     mut dir: PathBuf,
     name: String,
     preambule: bool,
-) -> (String, impl Future<Output = ()>) {
+) -> (String, Option<impl Future<Output = ()>>) {
     let filename = sha256_hash(&src);
     let mut output = dir.clone();
-
-    dir.push("typst-src");
-    fs::create_dir_all(&dir).expect("Can't create a dir");
-    dir.push(filename.clone() + ".typ");
-
-    let mut file = File::create(&dir).expect("Can't create file");
-    if preambule {
-        writeln!(file, "{}", PREAMBULE).expect("Error writing to file")
-    };
-    write!(file, "{}", src).expect("Error writing to file");
-
     output.push("typst-img");
-
-    fs::create_dir_all(&output).expect("Can't create a dir");
     output.push(filename.clone() + ".svg");
 
-    let res = Command::new("typst")
-        .arg("c")
-        .arg(dir)
-        .arg(&output)
-        .output();
+    let mut command = None;
 
-    (filename, async move {
-        let output = res.await.expect("Failed").stderr;
-        let output = String::from_utf8_lossy(&output);
+    if !output.exists() {
+        fs::create_dir_all(&output.parent().unwrap()).expect("Can't create a dir");
+        dir.push("typst-src");
+        fs::create_dir_all(&dir).expect("Can't create a dir");
+        dir.push(filename.clone() + ".typ");
 
-        if !output.trim().is_empty() {
-            let stderr = std::io::stderr();
-            let mut handle = stderr.lock();
-            writeln!(handle, "Error at \"{}\"\n", name).expect("Can't write to stderr");
-            writeln!(handle, "{}", output).expect("Can't write to stderr");
-        }
-    })
+        let mut file = File::create(&dir).expect("Can't create file");
+        if preambule {
+            writeln!(file, "{}", PREAMBULE).expect("Error writing to file")
+        };
+        write!(file, "{}", src).expect("Error writing to file");
+
+        let res = Command::new("typst")
+            .arg("c")
+            .arg(dir)
+            .arg(&output)
+            .output();
+
+        command = Some(async move {
+            let output = res.await.expect("Failed").stderr;
+            let output = String::from_utf8_lossy(&output);
+    
+            if !output.trim().is_empty() {
+                let stderr = std::io::stderr();
+                let mut handle = stderr.lock();
+                writeln!(handle, "Error at \"{}\"\n", name).expect("Can't write to stderr");
+                writeln!(handle, "{}", output).expect("Can't write to stderr");
+            }
+        });
+    }
+
+    (filename, command)
 }
