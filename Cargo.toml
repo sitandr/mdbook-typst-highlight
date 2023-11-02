@@ -7,11 +7,15 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
+async-process = "1.8.1"
 clap = "4.4.4"
+futures = "0.3.29"
 lazy_static = "1.4.0"
 mdbook = { version = "0.4.34", default-features = false }
 pulldown-cmark = "0.9.3"
 pulldown-cmark-to-cmark = "11.0.0"
 semver = "1.0.19"
 serde_json = "1.0.107"
+sha2 = "0.10.8"
 syntect = { version = "5.1.0", default-features = false, features = ["yaml-load", "default-themes", "regex-onig", "html"] }
+tokio = { version = "1.33.0", features = ["rt"] }

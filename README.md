@@ -1,6 +1,6 @@
 # mdbook-typst-highlight
 
-This is a preprocessor for [mdbook](https://github.com/rust-lang/mdBook) that uses [syntect](https://github.com/trishume/syntect) and [Typst syntax for Sublime Text](https://github.com/hyrious/typst-syntax-highlight/tree/main) to produce highlighted Typst code.
+This is a preprocessor for [mdbook](https://github.com/rust-lang/mdBook) that uses [syntect](https://github.com/trishume/syntect) and [Typst syntax for Sublime Text](https://github.com/hyrious/typst-syntax-highlight/tree/main) to produce&_render_ highlighted Typst code.
 
 Here is an example of output:
 
@@ -32,9 +32,9 @@ Currently there are only two settings available:
 disable_inline = true
 ```
 
-- Whether to highlight blocks without language specified:
+- Whether to highlight and render blocks without language specified:
 
 ```toml
 [preprocessor.typst-highlight]
-highlight_without_kind = true
+typst_default = true
 ```

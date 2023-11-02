@@ -1,3 +1,11 @@
+use async_process::Command;
+use futures::future::join_all;
+use sha2::{Digest, Sha256};
+use std::fs::{self, File};
+use std::future::Future;
+use std::io::Write;
+use std::path::PathBuf;
+
 use anyhow::anyhow;
 use lazy_static::lazy_static;
 use mdbook::book::Book;
@@ -17,6 +25,10 @@ use syntect::html::{
 };
 use syntect::parsing::SyntaxSetBuilder;
 use syntect::util::LinesWithEndings;
+
+static PREAMBULE: &str = "
+#set page(height: auto, width: 200pt, margin: 0.5cm)
+";
 
 lazy_static! {
     /// This is an example for using doc comment attributes
@@ -56,9 +68,8 @@ impl Preprocessor for TypstHighlight {
     }
 
     fn run(&self, ctx: &PreprocessorContext, mut book: Book) -> Result<Book, Error> {
-        let highlight_inline = !ctx
-            .config
-            .get_preprocessor(self.name())
+        let prep = ctx.config.get_preprocessor(self.name());
+        let highlight_inline = !prep
             .and_then(|typst_cfg| {
                 typst_cfg
                     .get("disable_inline")
@@ -66,19 +77,28 @@ impl Preprocessor for TypstHighlight {
             })
             .unwrap_or(false);
 
-        let highlight_without_lang = ctx
-            .config
-            .get_preprocessor(self.name())
+        let typst_default = prep
             .and_then(|typst_cfg| {
-                typst_cfg.get("highlight_without_lang").map(|v| {
+                typst_cfg.get("typst_default").map(|v| {
                     v.as_bool()
                         .expect("Incorrect argument at highlight_without_lang")
                 })
             })
             .unwrap_or(false);
 
+        let render = prep
+            .and_then(|typst_cfg| {
+                typst_cfg
+                    .get("render")
+                    .map(|v| v.as_bool().expect("Incorrect argument at render"))
+            })
+            .unwrap_or(false);
+
         book.sections.iter_mut().try_for_each(|section| {
-            process_chapter(section, highlight_inline, highlight_without_lang)
+            let mut build_dir = ctx.root.clone();
+            build_dir.push(&ctx.config.book.src);
+
+            process_chapter(section, highlight_inline, typst_default, render, &build_dir)
         })?;
 
         Ok(book)
@@ -92,47 +112,91 @@ impl Preprocessor for TypstHighlight {
 fn process_chapter(
     section: &mut BookItem,
     highlight_inline: bool,
-    highlight_without_lang: bool,
+    typst_default: bool,
+    render: bool,
+    build_dir: &PathBuf,
 ) -> Result<()> {
     if let BookItem::Chapter(chapter) = section {
         chapter.sub_items.iter_mut().try_for_each(|section| {
-            process_chapter(section, highlight_inline, highlight_without_lang)
+            process_chapter(section, highlight_inline, typst_default, render, build_dir)
         })?;
 
         let events = new_cmark_parser(&chapter.content, false);
         let mut new_events = Vec::new();
         let mut codeblock_text = None;
 
+        let mut chapter_path = build_dir.clone();
+        if let Some(p) = chapter.path.as_ref().and_then(|p| p.parent()) {
+            chapter_path.push(p)
+        };
+
+        let mut compile_errors = vec![];
+
         for event in events {
             match event {
                 Event::Start(tag) => {
-                    if is_typst_codeblock(&tag, highlight_without_lang) {
-                        codeblock_text = Some(String::new())
+                    let lang = get_lang(&tag, typst_default);
+
+                    if let Some(lang) = lang {
+                        if is_typst_codeblock(lang) {
+                            codeblock_text = Some(String::new())
+                        } else {
+                            new_events.push(Event::Start(tag))
+                        }
                     } else {
                         new_events.push(Event::Start(tag))
                     }
                 }
                 Event::End(tag) => {
-                    if is_typst_codeblock(&tag, highlight_without_lang) {
-                        new_events.push(Event::Html(highlight(
-                            codeblock_text
-                                .ok_or(anyhow!(
-                                    "Typst codeblock wasn't created: chapter {}.
+                    let lang = get_lang(&tag, typst_default);
+
+                    if let Some(lang) = lang {
+                        if is_typst_codeblock(lang) {
+                            let text = codeblock_text.ok_or(anyhow!(
+                                "Typst codeblock wasn't created: chapter {}.
                                     Data collected: {:?}",
-                                    chapter.name,
-                                    new_events
-                                ))?
-                                .into(),
-                            false,
-                        )?));
-                        // new_events.push(Event::SoftBreak);
-                        codeblock_text = None
+                                chapter.name,
+                                new_events
+                            ))?;
+
+                            let mut html = highlight(text.clone().into(), false)?;
+
+                            if render && !lang.contains("norender") {
+                                let (file, err) = render_block(
+                                    text,
+                                    chapter_path.clone(),
+                                    chapter.name.clone(),
+                                    !lang.contains("nopreambule"),
+                                );
+
+                                compile_errors.push(err);
+
+                                html += format!(
+                                    r#"<div style="
+                                    text-align: center;
+                                    padding: 0.5em;
+                                    background: var(--quote-bg);
+                                    "><img align="middle" src="typst-img/{file}.svg" alt="Rendered image" style="
+                                    background: white;
+                                    max-width: 500pt;
+                                    width: 100%;
+                                "></div>"#
+                                ).as_str();
+                            }
+                            new_events.push(Event::Html(
+                                format!(r#"<div style="margin-bottom: 0.5em">{}</div>"#, html)
+                                    .into(),
+                            ));
+                            codeblock_text = None
+                        } else {
+                            new_events.push(Event::End(tag))
+                        }
                     } else {
                         new_events.push(Event::End(tag))
                     }
                 }
                 Event::Code(code) if highlight_inline => {
-                    new_events.push(Event::Html(highlight(code, true)?))
+                    new_events.push(Event::Html(highlight(code, true)?.into()))
                 }
                 Event::Text(s) => {
                     if let Some(ref mut text) = codeblock_text {
@@ -149,23 +213,39 @@ fn process_chapter(
         cmark(new_events.into_iter(), &mut buf)
             .map_err(|err| anyhow!("Markdown serialization failed: {}", err))?;
 
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        runtime.block_on(async { join_all(compile_errors).await });
+
         chapter.content = buf;
     }
     Ok(())
 }
 
-fn is_typst_codeblock(t: &Tag, highlight_without_lang: bool) -> bool {
+fn get_lang<'a>(t: &'a Tag, typst_default: bool) -> Option<&'a str> {
     if let Tag::CodeBlock(ref kind) = *t {
         match kind {
-            CodeBlockKind::Fenced(kind) => kind.as_ref() == "typ" || kind.as_ref() == "typst",
-            CodeBlockKind::Indented => true,
+            CodeBlockKind::Fenced(kind) => Some(kind.as_ref()),
+            CodeBlockKind::Indented => {
+                if typst_default {
+                    Some("typ")
+                } else {
+                    None
+                }
+            }
         }
     } else {
-        highlight_without_lang && matches!(t, Tag::CodeBlock(_))
+        None
     }
 }
 
-fn highlight(s: CowStr, inline: bool) -> Result<CowStr> {
+fn is_typst_codeblock(s: &str) -> bool {
+    s.contains("typ") || s.contains("typ")
+}
+
+fn highlight(s: CowStr, inline: bool) -> Result<String> {
     let mut s = s.into_string();
     if s.ends_with('\n') {
         s.pop();
@@ -199,5 +279,55 @@ fn highlight(s: CowStr, inline: bool) -> Result<CowStr> {
 
     html = html.replace("#1bdf3363", "var(--fg)");
 
-    Ok(html.into())
+    Ok(html)
+}
+
+fn sha256_hash(input: &str) -> String {
+    let mut res = Sha256::new();
+    res.update(input.as_bytes());
+    let res = res.finalize();
+    format!("{:x}", res)
+}
+
+fn render_block(
+    src: String,
+    mut dir: PathBuf,
+    name: String,
+    preambule: bool,
+) -> (String, impl Future<Output = ()>) {
+    let filename = sha256_hash(&src);
+    let mut output = dir.clone();
+
+    dir.push("typst-src");
+    fs::create_dir_all(&dir).expect("Can't create a dir");
+    dir.push(filename.clone() + ".typ");
+
+    let mut file = File::create(&dir).expect("Can't create file");
+    if preambule {
+        writeln!(file, "{}", PREAMBULE).expect("Error writing to file")
+    };
+    write!(file, "{}", src).expect("Error writing to file");
+
+    output.push("typst-img");
+
+    fs::create_dir_all(&output).expect("Can't create a dir");
+    output.push(filename.clone() + ".svg");
+
+    let res = Command::new("typst")
+        .arg("c")
+        .arg(dir)
+        .arg(&output)
+        .output();
+
+    (filename, async move {
+        let output = res.await.expect("Failed").stderr;
+        let output = String::from_utf8_lossy(&output);
+
+        if !output.trim().is_empty() {
+            let stderr = std::io::stderr();
+            let mut handle = stderr.lock();
+            writeln!(handle, "Error at \"{}\"\n", name).expect("Can't write to stderr");
+            writeln!(handle, "{}", output).expect("Can't write to stderr");
+        }
+    })
 }
