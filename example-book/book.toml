@@ -7,5 +7,5 @@ title = "Example book about Typst"
 
 [preprocessor.typst-highlight]
 #disable_inline = true
-#typst_default = true
+typst_default = true
 render = true

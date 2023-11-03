@@ -54,7 +54,7 @@ Rendered looks like this:
 
 ![Example](img/image_2.png)
 
-It comes with prelude that sets `width: 300pt`, `margin: 0.5cm` and `height: auto`. To disable it, add `typ-noprelude` as codeblock language.
+It comes with prelude that sets `width: 300pt`, `margin: 0.5cm` and `height: auto`. To disable it, add `typ-nopreamble` as codeblock language.
 
 You can also disable certain blocks (but still highlight them) using `typ-norender`.
 

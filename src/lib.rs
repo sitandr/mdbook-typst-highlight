@@ -26,8 +26,8 @@ use syntect::html::{
 use syntect::parsing::SyntaxSetBuilder;
 use syntect::util::LinesWithEndings;
 
-static PREAMBULE: &str = "
-#set page(height: auto, width: 200pt, margin: 0.5cm)
+static PREAMBLE: &str = "
+#set page(height: auto, width: 400pt, margin: 0.5cm)
 ";
 
 lazy_static! {
@@ -166,7 +166,7 @@ fn process_chapter(
                                     text,
                                     chapter_path.clone(),
                                     chapter.name.clone(),
-                                    !lang.contains("nopreambule"),
+                                    !lang.contains("nopreamble"),
                                 );
 
                                 compile_errors.extend(err);
@@ -187,6 +187,7 @@ fn process_chapter(
                                 format!(r#"<div style="margin-bottom: 0.5em">{}</div>"#, html)
                                     .into(),
                             ));
+                            new_events.push(Event::HardBreak);
                             codeblock_text = None
                         } else {
                             new_events.push(Event::End(tag))
@@ -225,16 +226,15 @@ fn process_chapter(
 }
 
 fn get_lang<'a>(t: &'a Tag, typst_default: bool) -> Option<&'a str> {
+    let default = if typst_default {
+        Some("typ")
+    } else {
+        None
+    };
     if let Tag::CodeBlock(ref kind) = *t {
         match kind {
-            CodeBlockKind::Fenced(kind) => Some(kind.as_ref()),
-            CodeBlockKind::Indented => {
-                if typst_default {
-                    Some("typ")
-                } else {
-                    None
-                }
-            }
+            CodeBlockKind::Fenced(kind) => (!kind.is_empty()).then(|| kind.as_ref()).or(default),
+            CodeBlockKind::Indented => default
         }
     } else {
         None
@@ -242,7 +242,7 @@ fn get_lang<'a>(t: &'a Tag, typst_default: bool) -> Option<&'a str> {
 }
 
 fn is_typst_codeblock(s: &str) -> bool {
-    s.contains("typ") || s.contains("typ")
+    s.contains("typ") || s.contains("typst")
 }
 
 fn highlight(s: CowStr, inline: bool) -> Result<String> {
@@ -293,7 +293,7 @@ fn render_block(
     src: String,
     mut dir: PathBuf,
     name: String,
-    preambule: bool,
+    preamble: bool,
 ) -> (String, Option<impl Future<Output = ()>>) {
     let filename = sha256_hash(&src);
     let mut output = dir.clone();
@@ -309,26 +309,27 @@ fn render_block(
         dir.push(filename.clone() + ".typ");
 
         let mut file = File::create(&dir).expect("Can't create file");
-        if preambule {
-            writeln!(file, "{}", PREAMBULE).expect("Error writing to file")
+        if preamble {
+            writeln!(file, "{}", PREAMBLE).expect("Error writing to file")
         };
         write!(file, "{}", src).expect("Error writing to file");
 
         let res = Command::new("typst")
             .arg("c")
-            .arg(dir)
+            .arg(&dir)
+            .arg("--root")
+            .arg(dir.parent().unwrap().parent().unwrap())
             .arg(&output)
             .output();
 
         command = Some(async move {
             let output = res.await.expect("Failed").stderr;
-            let output = String::from_utf8_lossy(&output);
     
-            if !output.trim().is_empty() {
+            if !output.is_empty() {
                 let stderr = std::io::stderr();
                 let mut handle = stderr.lock();
-                writeln!(handle, "Error at \"{}\"\n", name).expect("Can't write to stderr");
-                writeln!(handle, "{}", output).expect("Can't write to stderr");
+                writeln!(handle, "Error at chapter \"{}\"\n", name).expect("Can't write to stderr");
+                handle.write_all(&output).expect("Can't write to stderr");
             }
         });
     }
