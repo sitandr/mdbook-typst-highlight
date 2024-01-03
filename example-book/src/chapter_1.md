@@ -23,3 +23,12 @@ This is some `#inline` code.
 ```
 This is code without any lang specified.
 ```
+
+````typ
+Typst and some Rust inside
+```rust
+fn main() {
+    todo!();
+}
+```
+````

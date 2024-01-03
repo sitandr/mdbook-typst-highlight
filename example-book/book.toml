@@ -9,3 +9,4 @@ title = "Example book about Typst"
 #disable_inline = true
 typst_default = true
 render = true
+warn_not_specified = true

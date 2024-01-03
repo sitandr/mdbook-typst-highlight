@@ -23,7 +23,6 @@ use syntect::highlighting::{Theme, ThemeSet};
 use syntect::html::{
     append_highlighted_html_for_styled_line, styled_line_to_highlighted_html, IncludeBackground,
 };
-use syntect::parsing::SyntaxSetBuilder;
 use syntect::util::LinesWithEndings;
 
 static PREAMBLE: &str = "
@@ -54,13 +53,30 @@ lazy_static! {
             None,
         ).expect("Syntax data was corrupted");
 
-        let mut syntax = SyntaxSetBuilder::new();
+        let mut syntax = SyntaxSet::load_defaults_nonewlines().into_builder();
         syntax.add(typst_syntax);
         syntax.build()
     };
 }
 
+struct PreprocessSettings {
+    highlight_inline: bool,
+    typst_default: bool,
+    render: bool,
+    warn_not_specified: bool
+}
+
 pub struct TypstHighlight;
+
+fn get_setting(preprocessor: Option<&toml::map::Map<String, toml::Value>>, name: &str) -> bool {
+    preprocessor
+        .and_then(|typst_cfg| {
+            typst_cfg
+                .get(name)
+                .map(|v| v.as_bool().expect(&("Incorrect argument at".to_owned() + name)))
+        })
+        .unwrap_or(false)
+}
 
 impl Preprocessor for TypstHighlight {
     fn name(&self) -> &str {
@@ -69,36 +85,19 @@ impl Preprocessor for TypstHighlight {
 
     fn run(&self, ctx: &PreprocessorContext, mut book: Book) -> Result<Book, Error> {
         let prep = ctx.config.get_preprocessor(self.name());
-        let highlight_inline = !prep
-            .and_then(|typst_cfg| {
-                typst_cfg
-                    .get("disable_inline")
-                    .map(|v| v.as_bool().expect("Incorrect argument at disable_inline"))
-            })
-            .unwrap_or(false);
 
-        let typst_default = prep
-            .and_then(|typst_cfg| {
-                typst_cfg.get("typst_default").map(|v| {
-                    v.as_bool()
-                        .expect("Incorrect argument at highlight_without_lang")
-                })
-            })
-            .unwrap_or(false);
+        let highlight_inline = !get_setting(prep, "disable_inline");
+        let typst_default = get_setting(prep, "typst_default");
+        let render = get_setting(prep, "render");
+        let warn_not_specified = get_setting(prep, "warn_not_specified");
 
-        let render = prep
-            .and_then(|typst_cfg| {
-                typst_cfg
-                    .get("render")
-                    .map(|v| v.as_bool().expect("Incorrect argument at render"))
-            })
-            .unwrap_or(false);
+        let settings = PreprocessSettings{ highlight_inline, typst_default, render, warn_not_specified };
 
         book.sections.iter_mut().try_for_each(|section| {
             let mut build_dir = ctx.root.clone();
             build_dir.push(&ctx.config.book.src);
 
-            process_chapter(section, highlight_inline, typst_default, render, &build_dir)
+            process_chapter(section, &settings, &build_dir)
         })?;
 
         Ok(book)
@@ -111,14 +110,12 @@ impl Preprocessor for TypstHighlight {
 
 fn process_chapter(
     section: &mut BookItem,
-    highlight_inline: bool,
-    typst_default: bool,
-    render: bool,
+    settings: &PreprocessSettings,
     build_dir: &PathBuf,
 ) -> Result<()> {
     if let BookItem::Chapter(chapter) = section {
         chapter.sub_items.iter_mut().try_for_each(|section| {
-            process_chapter(section, highlight_inline, typst_default, render, build_dir)
+            process_chapter(section, settings, build_dir)
         })?;
 
         let events = new_cmark_parser(&chapter.content, false);
@@ -135,7 +132,7 @@ fn process_chapter(
         for event in events {
             match event {
                 Event::Start(tag) => {
-                    let lang = get_lang(&tag, typst_default);
+                    let lang = get_lang(&tag, settings, None);
 
                     if let Some(lang) = lang {
                         if is_typst_codeblock(lang) {
@@ -148,7 +145,7 @@ fn process_chapter(
                     }
                 }
                 Event::End(tag) => {
-                    let lang = get_lang(&tag, typst_default);
+                    let lang = get_lang(&tag, settings, Some(&chapter.name));
 
                     if let Some(lang) = lang {
                         if is_typst_codeblock(lang) {
@@ -159,9 +156,9 @@ fn process_chapter(
                                 new_events
                             ))?;
 
-                            let mut html = highlight(text.clone().into(), false)?;
+                            let mut html = highlight(text.clone().into(), false);
 
-                            if render && !lang.contains("norender") {
+                            if settings.render && !lang.contains("norender") {
                                 let (file, err) = render_block(
                                     text,
                                     chapter_path.clone(),
@@ -196,8 +193,8 @@ fn process_chapter(
                         new_events.push(Event::End(tag))
                     }
                 }
-                Event::Code(code) if highlight_inline => {
-                    new_events.push(Event::Html(highlight(code, true)?.into()))
+                Event::Code(code) if settings.highlight_inline => {
+                    new_events.push(Event::Html(highlight(code, true).into()))
                 }
                 Event::Text(s) => {
                     if let Some(ref mut text) = codeblock_text {
@@ -225,15 +222,23 @@ fn process_chapter(
     Ok(())
 }
 
-fn get_lang<'a>(t: &'a Tag, typst_default: bool) -> Option<&'a str> {
-    let default = if typst_default {
+fn get_lang<'a>(t: &'a Tag, settings: &PreprocessSettings, chapter: Option<&str>) -> Option<&'a str> {
+    let default = if settings.typst_default {
         Some("typ")
     } else {
         None
     };
     if let Tag::CodeBlock(ref kind) = *t {
         match kind {
-            CodeBlockKind::Fenced(kind) => (!kind.is_empty()).then(|| kind.as_ref()).or(default),
+            CodeBlockKind::Fenced(kind) => (!kind.is_empty()).then(|| kind.as_ref())
+                .or_else(|| {
+                    if settings.warn_not_specified {
+                        if let Some(chapter) = chapter {
+                            eprintln!("Codeblock language not specified in {}", chapter)
+                        }
+                    }
+                    default
+                }),
             CodeBlockKind::Indented => default
         }
     } else {
@@ -245,18 +250,18 @@ fn is_typst_codeblock(s: &str) -> bool {
     s.contains("typ") || s.contains("typst")
 }
 
-fn highlight(s: CowStr, inline: bool) -> Result<String> {
+fn highlight(s: CowStr, inline: bool) -> String {
     let mut s = s.into_string();
     if s.ends_with('\n') {
         s.pop();
     }
 
-    let syntax = SYNTAX.syntaxes().first().unwrap();
+    let syntax = SYNTAX.syntaxes().last().unwrap();
 
     let mut html = if inline {
         let mut h = HighlightLines::new(syntax, &THEME);
-        let regs = h.highlight_line(s.as_ref(), &SYNTAX)?;
-        let html = styled_line_to_highlighted_html(&regs[..], IncludeBackground::No)?;
+        let regs = h.highlight_line(s.as_ref(), &SYNTAX).unwrap(); // everything should be fine
+        let html = styled_line_to_highlighted_html(&regs[..], IncludeBackground::No).unwrap();
         format!(r#"<code class="hljs">{}</code>"#, html)
     } else {
         let mut html = r#"<pre style="margin: 0"><code class="language-typ hljs">"#.into();
@@ -264,12 +269,12 @@ fn highlight(s: CowStr, inline: bool) -> Result<String> {
         let mut highlighter = HighlightLines::new(syntax, &THEME);
 
         for line in LinesWithEndings::from(&s) {
-            let regions = highlighter.highlight_line(line, &SYNTAX)?;
+            let regions = highlighter.highlight_line(line, &SYNTAX).unwrap();
             append_highlighted_html_for_styled_line(
                 &regions[..],
                 IncludeBackground::No,
                 &mut html,
-            )?;
+            ).unwrap();
         }
 
         html.push_str("</code></pre>\n");
@@ -279,7 +284,7 @@ fn highlight(s: CowStr, inline: bool) -> Result<String> {
 
     html = html.replace("#1bdf3363", "var(--fg)");
 
-    Ok(html)
+    html
 }
 
 fn sha256_hash(input: &str) -> String {

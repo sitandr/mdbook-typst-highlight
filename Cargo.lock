@@ -803,6 +803,7 @@ dependencies = [
  "sha2",
  "syntect",
  "tokio",
+ "toml",
 ]
 
 [[package]]
