@@ -27,3 +27,11 @@ It uses external Typst that should be installed in path, so you can use packages
     })
 })
 ```
+
+```typ
+$integral_a^b x^2$
+
+#show math.equation: set text(font: "Fira Math", fallback: false)
+
+$integral_a^b x^2$
+```

@@ -162,6 +162,7 @@ fn process_chapter(
                                 let (file, err) = render_block(
                                     text,
                                     chapter_path.clone(),
+                                    build_dir.clone(),
                                     chapter.name.clone(),
                                     !lang.contains("nopreamble"),
                                 );
@@ -297,6 +298,7 @@ fn sha256_hash(input: &str) -> String {
 fn render_block(
     src: String,
     mut dir: PathBuf,
+    mut build_dir: PathBuf,
     name: String,
     preamble: bool,
 ) -> (String, Option<impl Future<Output = ()>>) {
@@ -319,13 +321,21 @@ fn render_block(
         };
         write!(file, "{}", src).expect("Error writing to file");
 
-        let res = Command::new("typst")
+        let mut res = Command::new("typst");
+        let mut res = res
             .arg("c")
             .arg(&dir)
             .arg("--root")
             .arg(dir.parent().unwrap().parent().unwrap())
-            .arg(&output)
-            .output();
+            .arg(&output);
+
+        build_dir.push("fonts");
+    
+        if build_dir.exists() {
+            res = res.arg("--font-path").arg(build_dir)
+        }
+        
+        let res = res.output();
 
         command = Some(async move {
             let output = res.await.expect("Failed").stderr;
