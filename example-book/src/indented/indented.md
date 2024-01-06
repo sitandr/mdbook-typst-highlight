@@ -5,3 +5,10 @@
     This is a block
 ]
 ```
+
+```typ
+Page break:
+#pagebreak()
+#set page(header: "HEADER")
+Some text
+```

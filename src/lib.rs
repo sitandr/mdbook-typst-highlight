@@ -4,7 +4,9 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::future::Future;
 use std::io::Write;
+use std::iter;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use anyhow::anyhow;
 use lazy_static::lazy_static;
@@ -63,7 +65,7 @@ struct PreprocessSettings {
     highlight_inline: bool,
     typst_default: bool,
     render: bool,
-    warn_not_specified: bool
+    warn_not_specified: bool,
 }
 
 pub struct TypstHighlight;
@@ -71,9 +73,10 @@ pub struct TypstHighlight;
 fn get_setting(preprocessor: Option<&toml::map::Map<String, toml::Value>>, name: &str) -> bool {
     preprocessor
         .and_then(|typst_cfg| {
-            typst_cfg
-                .get(name)
-                .map(|v| v.as_bool().expect(&("Incorrect argument at".to_owned() + name)))
+            typst_cfg.get(name).map(|v| {
+                v.as_bool()
+                    .expect(&("Incorrect argument at".to_owned() + name))
+            })
         })
         .unwrap_or(false)
 }
@@ -91,7 +94,12 @@ impl Preprocessor for TypstHighlight {
         let render = get_setting(prep, "render");
         let warn_not_specified = get_setting(prep, "warn_not_specified");
 
-        let settings = PreprocessSettings{ highlight_inline, typst_default, render, warn_not_specified };
+        let settings = PreprocessSettings {
+            highlight_inline,
+            typst_default,
+            render,
+            warn_not_specified,
+        };
 
         book.sections.iter_mut().try_for_each(|section| {
             let mut build_dir = ctx.root.clone();
@@ -114,9 +122,10 @@ fn process_chapter(
     build_dir: &PathBuf,
 ) -> Result<()> {
     if let BookItem::Chapter(chapter) = section {
-        chapter.sub_items.iter_mut().try_for_each(|section| {
-            process_chapter(section, settings, build_dir)
-        })?;
+        chapter
+            .sub_items
+            .iter_mut()
+            .try_for_each(|section| process_chapter(section, settings, build_dir))?;
 
         let events = new_cmark_parser(&chapter.content, false);
         let mut new_events = Vec::new();
@@ -166,20 +175,11 @@ fn process_chapter(
                                     chapter.name.clone(),
                                     !lang.contains("nopreamble"),
                                 );
+                                let file = file.to_str().unwrap();
 
                                 compile_errors.extend(err);
 
-                                html += format!(
-                                    r#"<div style="
-                                    text-align: center;
-                                    padding: 0.5em;
-                                    background: var(--quote-bg);
-                                    "><img align="middle" src="typst-img/{file}.svg" alt="Rendered image" style="
-                                    background: white;
-                                    max-width: 500pt;
-                                    width: 100%;
-                                "></div>"#
-                                ).as_str();
+                                html += format!("<typst-render-insert-image-{file}>").as_str();
                             }
                             new_events.push(Event::Html(
                                 format!(r#"<div style="margin-bottom: 0.5em">{}</div>"#, html)
@@ -208,22 +208,57 @@ fn process_chapter(
             }
         }
 
-        let mut buf = String::with_capacity(chapter.content.len());
-        cmark(new_events.into_iter(), &mut buf)
-            .map_err(|err| anyhow!("Markdown serialization failed: {}", err))?;
-
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
 
         runtime.block_on(async { join_all(compile_errors).await });
 
+        // Okay, all images are rendered now, so it's time to replace file names with true ones!
+
+        let new_events = new_events.into_iter().map(|e| {
+            match e {
+                Event::Html(s) if s.contains("<typst-render-insert-image-") => {
+                    const PATTLENGTH: usize = "<typst-render-insert-image-".len();
+
+                    let start = s.find("<typst-render-insert-image-").unwrap();
+                    let end = start + PATTLENGTH + s[start+PATTLENGTH..].find('>').expect("Someone who inserts crazy tags forgot to close the bracket");
+                    let file = PathBuf::from_str(&s[start+PATTLENGTH..end]).expect("Problem when decoding path");
+
+                    let inner = get_images(file).map(|name| {
+                        format!(
+                        r#"<div style="
+                        text-align: center;
+                        padding: 0.5em;
+                        background: var(--quote-bg);
+                        "><img align="middle" src="typst-img/{name}" alt="Rendered image" style="
+                        background: white;
+                        max-width: 500pt;
+                        width: 100%;
+                    "></div>"#)}).collect::<String>();
+
+                    let new_s = s[..start].to_owned() + inner.as_str() + &s[end+1..];
+
+                    Event::Html(new_s.into())
+                },
+                e => e
+            }
+        });
+
+        let mut buf = String::with_capacity(chapter.content.len());
+        cmark(new_events.into_iter(), &mut buf)
+            .map_err(|err| anyhow!("Markdown serialization failed: {}", err))?;
+
         chapter.content = buf;
     }
     Ok(())
 }
 
-fn get_lang<'a>(t: &'a Tag, settings: &PreprocessSettings, chapter: Option<&str>) -> Option<&'a str> {
+fn get_lang<'a>(
+    t: &'a Tag,
+    settings: &PreprocessSettings,
+    chapter: Option<&str>,
+) -> Option<&'a str> {
     let default = if settings.typst_default {
         Some("typ")
     } else {
@@ -231,16 +266,17 @@ fn get_lang<'a>(t: &'a Tag, settings: &PreprocessSettings, chapter: Option<&str>
     };
     if let Tag::CodeBlock(ref kind) = *t {
         match kind {
-            CodeBlockKind::Fenced(kind) => (!kind.is_empty()).then(|| kind.as_ref())
-                .or_else(|| {
+            CodeBlockKind::Fenced(kind) => {
+                (!kind.is_empty()).then(|| kind.as_ref()).or_else(|| {
                     if settings.warn_not_specified {
                         if let Some(chapter) = chapter {
                             eprintln!("Codeblock language not specified in {}", chapter)
                         }
                     }
                     default
-                }),
-            CodeBlockKind::Indented => default
+                })
+            }
+            CodeBlockKind::Indented => default,
         }
     } else {
         None
@@ -271,11 +307,8 @@ fn highlight(s: CowStr, inline: bool) -> String {
 
         for line in LinesWithEndings::from(&s) {
             let regions = highlighter.highlight_line(line, &SYNTAX).unwrap();
-            append_highlighted_html_for_styled_line(
-                &regions[..],
-                IncludeBackground::No,
-                &mut html,
-            ).unwrap();
+            append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut html)
+                .unwrap();
         }
 
         html.push_str("</code></pre>\n");
@@ -295,22 +328,45 @@ fn sha256_hash(input: &str) -> String {
     format!("{:x}", res)
 }
 
+fn get_images(src: PathBuf) -> impl Iterator<Item = String> {
+    let mut n = 1;
+    let fbase = src.file_name().unwrap().to_str().unwrap().to_owned();
+
+    iter::from_fn(move || {
+        let path = src.clone();
+        let path = path.with_file_name(fbase.clone() + format!("-{n}.svg").as_str());
+
+        if path.exists() {
+            n += 1;
+            Some(path.file_name().unwrap().to_string_lossy().into_owned())
+        } else {
+            None
+        }
+    })
+    .fuse()
+}
+
 fn render_block(
     src: String,
     mut dir: PathBuf,
     mut build_dir: PathBuf,
     name: String,
     preamble: bool,
-) -> (String, Option<impl Future<Output = ()>>) {
+) -> (PathBuf, Option<impl Future<Output = ()>>) {
     let filename = sha256_hash(&src);
     let mut output = dir.clone();
     output.push("typst-img");
-    output.push(filename.clone() + ".svg");
+    let mut check = output.clone();
+    let mut cut_output = output.clone();
+    cut_output.push(filename.clone());
+
+    output.push(filename.clone() + "-{n}.svg");
+    check.push(filename.clone() + "-{1}.svg");
 
     let mut command = None;
 
-    if !output.exists() {
-        fs::create_dir_all(&output.parent().unwrap()).expect("Can't create a dir");
+    if !check.exists() {
+        fs::create_dir_all(output.parent().unwrap()).expect("Can't create a dir");
         dir.push("typst-src");
         fs::create_dir_all(&dir).expect("Can't create a dir");
         dir.push(filename.clone() + ".typ");
@@ -330,16 +386,16 @@ fn render_block(
             .arg(&output);
 
         build_dir.push("fonts");
-    
+
         if build_dir.exists() {
             res = res.arg("--font-path").arg(build_dir)
         }
-        
+
         let res = res.output();
 
         command = Some(async move {
             let output = res.await.expect("Failed").stderr;
-    
+
             if !output.is_empty() {
                 let stderr = std::io::stderr();
                 let mut handle = stderr.lock();
@@ -349,5 +405,5 @@ fn render_block(
         });
     }
 
-    (filename, command)
+    (cut_output, command)
 }
