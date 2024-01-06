@@ -361,7 +361,7 @@ fn render_block(
     cut_output.push(filename.clone());
 
     output.push(filename.clone() + "-{n}.svg");
-    check.push(filename.clone() + "-{1}.svg");
+    check.push(filename.clone() + "-1.svg");
 
     let mut command = None;
 
