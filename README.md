@@ -11,7 +11,7 @@ Here is an example of output:
 Install using `cargo`:
 
 ```bash
-cargo install --git https://github.com/sitandr/mdbook-typst-highlight
+cargo install --git https://github.com/sitandr/mdbook-typst-highlight --locked
 ```
 
 To add preprocessor to `mdbook`, add this to your `book.toml`:
