@@ -1,23 +1,20 @@
 [package]
 name = "mdbook-typst-highlight"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+version = "0.3.0"
+edition = "2024"
 
 [dependencies]
-anyhow = "1.0.75"
-async-process = "1.8.1"
-clap = "4.4.4"
+anyhow = "1.0.100"
+async-process = "2.5.0"
+clap = "4.5.54"
 futures = "0.3.29"
-lazy_static = "1.4.0"
-mdbook = { version = "0.4.34", default-features = false }
-pulldown-cmark = "0.9.3"
-pulldown-cmark-to-cmark = "11.0.0"
-semver = "1.0.19"
-serde_json = "1.0.107"
-sha2 = "0.10.8"
-syntect = { version = "5.1.0", default-features = false, features = ["yaml-load", "default-themes", "regex-onig", "html", "default-syntaxes"] }
-tokio = { version = "1.33.0", features = ["rt"] }
-toml = "0.5.2"
-itertools = "*"
+lazy_static = "1.5.0"
+mdbook-preprocessor = "0.5.2"
+mdbook-markdown = "0.5.2"
+pulldown-cmark-to-cmark = "22.0.0"
+semver = "1.0.27"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+syntect = { version = "5.3.0", default-features = false, features = ["yaml-load", "default-themes", "regex-onig", "html", "default-syntaxes"] }
+tokio = { version = "1.48.0", features = ["rt"] }

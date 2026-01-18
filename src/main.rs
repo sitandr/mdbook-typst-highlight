@@ -1,6 +1,6 @@
 use clap::{Arg, ArgMatches, Command};
-use mdbook::errors::Error;
-use mdbook::preprocess::{CmdPreprocessor, Preprocessor};
+use mdbook_preprocessor::errors::Error;
+use mdbook_preprocessor::{parse_input, Preprocessor, MDBOOK_VERSION};
 use mdbook_typst_highlight::TypstHighlight;
 use semver::{Version, VersionReq};
 use std::io;
@@ -19,7 +19,6 @@ pub fn make_app() -> Command {
 fn main() {
     let matches = make_app().get_matches();
 
-    // Users will want to construct their own preprocessor here
     let preprocessor = TypstHighlight;
 
     if let Some(sub_args) = matches.subcommand_matches("supports") {
@@ -31,17 +30,17 @@ fn main() {
 }
 
 fn handle_preprocessing(pre: &dyn Preprocessor) -> Result<(), Error> {
-    let (ctx, book) = CmdPreprocessor::parse_input(io::stdin())?;
+    let (ctx, book) = parse_input(io::stdin())?;
 
     let book_version = Version::parse(&ctx.mdbook_version)?;
-    let version_req = VersionReq::parse(mdbook::MDBOOK_VERSION)?;
+    let version_req = VersionReq::parse(MDBOOK_VERSION)?;
 
     if !version_req.matches(&book_version) {
         eprintln!(
             "Warning: The {} plugin was built against version {} of mdbook, \
              but we're being called from version {}",
             pre.name(),
-            mdbook::MDBOOK_VERSION,
+            MDBOOK_VERSION,
             ctx.mdbook_version
         );
     }
@@ -59,7 +58,7 @@ fn handle_supports(pre: &dyn Preprocessor, sub_args: &ArgMatches) -> ! {
     let supported = pre.supports_renderer(renderer);
 
     // Signal whether the renderer is supported by exiting with 1 or 0.
-    if supported {
+    if supported.unwrap_or(false) {
         process::exit(0);
     } else {
         process::exit(1);
