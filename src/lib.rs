@@ -5,18 +5,18 @@ use std::fs::{self, File};
 use std::future::Future;
 use std::io::Write;
 use std::iter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::anyhow;
 use lazy_static::lazy_static;
 use mdbook_markdown::new_cmark_parser;
-use mdbook_markdown::pulldown_cmark::{CodeBlockKind, CowStr, Event, Tag, TagEnd};
-use mdbook_preprocessor::book::Book;
-use mdbook_preprocessor::book::BookItem;
+use mdbook_markdown::pulldown_cmark::{CodeBlockKind, Event, Tag, TagEnd};
+use mdbook_preprocessor::book::{Book, Chapter};
 use mdbook_preprocessor::errors::{Error, Result};
 use mdbook_preprocessor::{Preprocessor, PreprocessorContext};
 use pulldown_cmark_to_cmark::cmark;
+use serde::Deserialize;
 use syntect::highlighting::Color;
 use syntect::parsing::SyntaxSet;
 
@@ -27,9 +27,7 @@ use syntect::html::{
 };
 use syntect::util::LinesWithEndings;
 
-static PREAMBLE: &str = "
-#set page(height: auto, width: 400pt, margin: 0.5cm)
-";
+static PREAMBLE: &str = "#set page(height: auto, width: 400pt, margin: 0.5cm)\n";
 
 lazy_static! {
     static ref THEME: Theme = {
@@ -60,7 +58,9 @@ lazy_static! {
     };
 }
 
-#[derive(serde::Deserialize, Default)]
+pub struct TypstHighlight;
+
+#[derive(Deserialize, Default)]
 struct PreprocessSettings {
     #[serde(default)]
     disable_inline: bool,
@@ -72,7 +72,12 @@ struct PreprocessSettings {
     warn_not_specified: bool,
 }
 
-pub struct TypstHighlight;
+impl PreprocessSettings {
+    #[inline(always)]
+    fn highlight_inline(&self) -> bool {
+        !self.disable_inline
+    }
+}
 
 impl Preprocessor for TypstHighlight {
     fn name(&self) -> &str {
@@ -85,14 +90,25 @@ impl Preprocessor for TypstHighlight {
             .get::<PreprocessSettings>("preprocessor.typst-highlight")?
             .unwrap_or_default();
 
-        book.items.iter_mut().try_for_each(|section| {
+        let mut errors = vec![];
+
+        book.for_each_chapter_mut(|chapter| {
             let mut build_dir = ctx.root.clone();
             build_dir.push(&ctx.config.book.src);
 
-            process_chapter(section, &settings, &build_dir)
-        })?;
+            if let Err(e) = process_chapter(chapter, &settings, &build_dir) {
+                errors.push(e);
+            }
+        });
 
-        Ok(book)
+        if errors.is_empty() {
+            Ok(book)
+        } else {
+            Err(anyhow!(
+                "Errors occurred during preprocessing:\n{:#?}",
+                errors
+            ))
+        }
     }
 
     fn supports_renderer(&self, renderer: &str) -> Result<bool> {
@@ -101,85 +117,81 @@ impl Preprocessor for TypstHighlight {
 }
 
 fn process_chapter(
-    section: &mut BookItem,
+    chapter: &mut Chapter,
     settings: &PreprocessSettings,
-    build_dir: &PathBuf,
+    build_dir: &Path,
 ) -> Result<()> {
-    if let BookItem::Chapter(chapter) = section {
-        chapter
-            .sub_items
-            .iter_mut()
-            .try_for_each(|section| process_chapter(section, settings, build_dir))?;
+    let events = new_cmark_parser(&chapter.content, &Default::default());
+    let mut new_events = Vec::new();
 
-        let events = new_cmark_parser(&chapter.content, &Default::default());
-        let mut new_events = Vec::new();
-        let mut codeblock = None;
+    // (lang, text) of the current codeblock
+    let mut current_codeblock: Option<(String, String)> = None;
 
-        let mut chapter_path = build_dir.clone();
-        if let Some(p) = chapter.path.as_ref().and_then(|p| p.parent()) {
-            chapter_path.push(p)
-        };
+    let mut chapter_path = build_dir.to_path_buf();
+    if let Some(p) = chapter.path.as_ref().and_then(|p| p.parent()) {
+        chapter_path.push(p)
+    };
 
-        let mut compile_errors = vec![];
+    let mut compile_errors = vec![];
 
-        for event in events {
-            match event {
-                Event::Start(Tag::CodeBlock(ref kind)) => {
-                    match codeblock_lang(kind, settings, chapter.name.as_str()) {
-                        Some(lang) if is_typst_codeblock(lang) => {
-                            codeblock = Some((lang.to_owned(), String::new()))
-                        }
-                        _ => new_events.push(event),
+    for event in events {
+        match event {
+            Event::Start(Tag::CodeBlock(ref kind)) => {
+                match codeblock_lang(kind, settings, chapter.name.as_str()) {
+                    Some(lang) if is_typst_codeblock(lang) => {
+                        current_codeblock = Some((lang.to_owned(), String::new()))
                     }
+                    _ => new_events.push(event),
                 }
-                Event::End(TagEnd::CodeBlock) => match codeblock {
-                    Some((lang, text)) => {
-                        let mut html = highlight(text.clone().into(), false);
-
-                        if settings.render && !lang.contains("norender") {
-                            let (file, err) = render_block(
-                                text,
-                                chapter_path.clone(),
-                                build_dir.clone(),
-                                chapter.name.clone(),
-                                !lang.contains("nopreamble"),
-                            );
-                            let file = file.to_str().unwrap();
-
-                            compile_errors.extend(err);
-
-                            html += format!("<typst-render-insert-image-{file}>").as_str();
-                        }
-                        new_events.push(Event::Start(Tag::HtmlBlock));
-                        new_events.push(Event::Html(
-                            format!(r#"<div style="margin-bottom: 0.5em">{}</div>"#, html).into(),
-                        ));
-                        new_events.push(Event::End(TagEnd::HtmlBlock));
-                        new_events.push(Event::HardBreak);
-                        codeblock = None
-                    }
-                    None => new_events.push(event),
-                },
-                Event::Code(code) if !settings.disable_inline => {
-                    new_events.push(Event::Html(highlight(code, true).into()))
-                }
-                Event::Text(ref s) => match codeblock {
-                    Some((_, ref mut text)) => {
-                        text.push_str(s);
-                    }
-                    None => new_events.push(event),
-                },
-                ev => new_events.push(ev),
             }
+            Event::End(TagEnd::CodeBlock) => match current_codeblock {
+                Some((lang, text)) => {
+                    let mut html = highlight(text.as_str(), false);
+
+                    if settings.render && !lang.contains("norender") {
+                        let (file, err) = render_block(
+                            text,
+                            chapter_path.clone(),
+                            build_dir.to_path_buf(),
+                            chapter.name.clone(),
+                            !lang.contains("nopreamble"),
+                        );
+                        let file = file.to_str().unwrap();
+
+                        compile_errors.extend(err);
+
+                        html += format!("<typst-render-insert-image-{file}>").as_str();
+                    }
+                    new_events.push(Event::Start(Tag::HtmlBlock));
+                    new_events.push(Event::Html(
+                        format!(r#"<div style="margin-bottom: 0.5em">{}</div>"#, html).into(),
+                    ));
+                    new_events.push(Event::End(TagEnd::HtmlBlock));
+                    new_events.push(Event::HardBreak);
+                    current_codeblock = None
+                }
+                None => new_events.push(event),
+            },
+            Event::Code(code) if settings.highlight_inline() => {
+                new_events.push(Event::InlineHtml(highlight(code.as_ref(), true).into()))
+            }
+            Event::Text(ref s) => match current_codeblock {
+                Some((_, ref mut text)) => {
+                    text.push_str(s);
+                }
+                None => new_events.push(event),
+            },
+            ev => new_events.push(ev),
         }
+    }
 
-        let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+    let runtime = tokio::runtime::Builder::new_current_thread().build()?;
 
-        runtime.block_on(async { join_all(compile_errors).await });
+    runtime.block_on(async { join_all(compile_errors).await });
 
-        // Okay, all images are rendered now, so it's time to replace file names with true ones!
+    // Okay, all images are rendered now, so it's time to replace file names with true ones!
 
-        let new_events = new_events.into_iter().map(|e| match e {
+    let new_events = new_events.into_iter().map(|e| match e {
             Event::Html(s) if s.contains("<typst-render-insert-image-") => {
                 const PATTLENGTH: usize = "<typst-render-insert-image-".len();
 
@@ -209,12 +221,12 @@ fn process_chapter(
             e => e,
         });
 
-        let mut buf = String::with_capacity(chapter.content.len());
-        cmark(new_events.into_iter(), &mut buf)
-            .map_err(|err| anyhow!("Markdown serialization failed: {}", err))?;
+    let mut buf = String::with_capacity(chapter.content.len());
+    cmark(new_events.into_iter(), &mut buf)
+        .map_err(|err| anyhow!("Markdown serialization failed: {}", err))?;
 
-        chapter.content = buf;
-    }
+    chapter.content = buf;
+
     Ok(())
 }
 
@@ -247,17 +259,14 @@ fn is_typst_codeblock(s: &str) -> bool {
     s.contains("typ") || s.contains("typst")
 }
 
-fn highlight(s: CowStr, inline: bool) -> String {
-    let mut s = s.into_string();
-    if s.ends_with('\n') {
-        s.pop();
-    }
+fn highlight(src: &str, inline: bool) -> String {
+    let src = src.strip_suffix('\n').unwrap_or(src);
 
     let syntax = SYNTAX.syntaxes().last().unwrap();
 
     let mut html = if inline {
         let mut h = HighlightLines::new(syntax, &THEME);
-        let regs = h.highlight_line(s.as_ref(), &SYNTAX).unwrap(); // everything should be fine
+        let regs = h.highlight_line(src, &SYNTAX).unwrap(); // everything should be fine
         let html = styled_line_to_highlighted_html(&regs[..], IncludeBackground::No).unwrap();
         format!(r#"<code class="hljs">{}</code>"#, html)
     } else {
@@ -265,7 +274,7 @@ fn highlight(s: CowStr, inline: bool) -> String {
 
         let mut highlighter = HighlightLines::new(syntax, &THEME);
 
-        for line in LinesWithEndings::from(&s) {
+        for line in LinesWithEndings::from(src) {
             let regions = highlighter.highlight_line(line, &SYNTAX).unwrap();
             append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut html)
                 .unwrap();

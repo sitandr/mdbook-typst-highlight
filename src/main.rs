@@ -1,6 +1,6 @@
 use clap::{Arg, ArgMatches, Command};
-use mdbook_preprocessor::errors::Error;
-use mdbook_preprocessor::{parse_input, Preprocessor, MDBOOK_VERSION};
+use mdbook_preprocessor::errors::Result;
+use mdbook_preprocessor::{Preprocessor, MDBOOK_VERSION};
 use mdbook_typst_highlight::TypstHighlight;
 use semver::{Version, VersionReq};
 use std::io;
@@ -29,8 +29,8 @@ fn main() {
     }
 }
 
-fn handle_preprocessing(pre: &dyn Preprocessor) -> Result<(), Error> {
-    let (ctx, book) = parse_input(io::stdin())?;
+fn handle_preprocessing(pre: &dyn Preprocessor) -> Result<()> {
+    let (ctx, book) = mdbook_preprocessor::parse_input(io::stdin())?;
 
     let book_version = Version::parse(&ctx.mdbook_version)?;
     let version_req = VersionReq::parse(MDBOOK_VERSION)?;
@@ -55,10 +55,10 @@ fn handle_supports(pre: &dyn Preprocessor, sub_args: &ArgMatches) -> ! {
     let renderer = sub_args
         .get_one::<String>("renderer")
         .expect("Required argument");
-    let supported = pre.supports_renderer(renderer);
+    let supported = pre.supports_renderer(renderer).unwrap();
 
     // Signal whether the renderer is supported by exiting with 1 or 0.
-    if supported.unwrap_or(false) {
+    if supported {
         process::exit(0);
     } else {
         process::exit(1);

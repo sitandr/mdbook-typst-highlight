@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 async-process = "2.5.0"
 clap = "4.5.54"
-futures = "0.3.29"
+futures = "0.3.31"
 lazy_static = "1.5.0"
 mdbook-preprocessor = "0.5.2"
 mdbook-markdown = "0.5.2"
@@ -17,4 +17,4 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sha2 = "0.10.9"
 syntect = { version = "5.3.0", default-features = false, features = ["yaml-load", "default-themes", "regex-onig", "html", "default-syntaxes"] }
-tokio = { version = "1.48.0", features = ["rt"] }
+tokio = { version = "1.49.0", features = ["rt"] }
