@@ -280,7 +280,7 @@ fn highlight(src: &str, inline: bool) -> String {
                 .unwrap();
         }
 
-        html.push_str("</code></pre>\n");
+        html.push_str("</code></pre>");
 
         html
     };
@@ -323,6 +323,7 @@ fn render_block(
     let filename = sha256_hash(&src);
     let mut output = dir.clone();
     output.push("typst-img");
+
     let mut check = output.clone();
     let mut cut_output = output.clone();
     cut_output.push(filename.clone());
