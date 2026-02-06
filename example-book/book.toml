@@ -11,3 +11,6 @@ warn_not_specified = true
 
 # Uncomment the following line when developing
 # command = "cargo run --release"
+
+[output.html.code.hidelines]
+typst = "% "

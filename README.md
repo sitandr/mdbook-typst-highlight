@@ -24,20 +24,28 @@ After it, run `mdbook build` or `serve`. That's it. All inline code and blocks w
 
 ## Settings
 
-Currently there are only two settings available: 
-- Whether to highlight inline blocks (default is yes):
+You can customize the preprocessor using the following settings:
 
-```toml
-[preprocessor.typst-highlight]
-disable_inline = true
-```
+- Whether to highlight inline blocks (default is to highlight them):
 
-- Whether to highlight and render blocks without language specified:
+    ```toml
+    [preprocessor.typst-highlight]
+    disable_inline = true
+    ```
 
-```toml
-[preprocessor.typst-highlight]
-typst_default = true
-```
+- Whether to highlight and render blocks without language specified (default is `false`):
+
+    ```toml
+    [preprocessor.typst-highlight]
+    typst_default = true
+    ```
+
+- What symbols to use for hiding code lines (default is none, read more in [the mdBook documentation](https://rust-lang.github.io/mdBook/format/mdbook.html?highlight=hide#hiding-code-lines)):
+
+    ```toml
+    [output.html.code.hidelines]
+    typst = "% "
+    ```
 
 # Rendering
 
