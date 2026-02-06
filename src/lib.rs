@@ -11,7 +11,7 @@ use std::str::FromStr;
 use anyhow::anyhow;
 use lazy_static::lazy_static;
 use mdbook_markdown::new_cmark_parser;
-use mdbook_markdown::pulldown_cmark::{CodeBlockKind, Event, Tag, TagEnd};
+use mdbook_markdown::pulldown_cmark::{CodeBlockKind, CowStr, Event, Tag, TagEnd};
 use mdbook_preprocessor::book::{Book, Chapter};
 use mdbook_preprocessor::errors::{Error, Result};
 use mdbook_preprocessor::{Preprocessor, PreprocessorContext};
@@ -70,6 +70,9 @@ struct PreprocessSettings {
     render: bool,
     #[serde(default)]
     warn_not_specified: bool,
+
+    #[serde(skip_deserializing)]
+    hide_lines: Option<String>,
 }
 
 impl PreprocessSettings {
@@ -85,10 +88,19 @@ impl Preprocessor for TypstHighlight {
     }
 
     fn run(&self, ctx: &PreprocessorContext, mut book: Book) -> Result<Book, Error> {
-        let settings = ctx
-            .config
-            .get::<PreprocessSettings>("preprocessor.typst-highlight")?
-            .unwrap_or_default();
+        let settings = {
+            let mut preprocessor_settings = ctx
+                .config
+                .get::<PreprocessSettings>("preprocessor.typst-highlight")?
+                .unwrap_or_default();
+
+            preprocessor_settings.hide_lines = ctx
+                .config
+                .get::<String>("output.html.code.hidelines.typst")?
+                .filter(|s| !s.is_empty());
+
+            preprocessor_settings
+        };
 
         let mut errors = vec![];
 
@@ -146,7 +158,12 @@ fn process_chapter(
             }
             Event::End(TagEnd::CodeBlock) => match current_codeblock {
                 Some((lang, text)) => {
-                    let mut html = highlight(text.as_str(), false);
+                    let hide_lines = lang
+                        .split(',')
+                        .find_map(|opt| opt.strip_prefix("hidelines="))
+                        .or(settings.hide_lines.as_deref());
+
+                    let mut html = highlight(text.as_str(), false, hide_lines);
 
                     if settings.render && !lang.contains("norender") {
                         let (file, err) = render_block(
@@ -155,6 +172,7 @@ fn process_chapter(
                             build_dir.to_path_buf(),
                             chapter.name.clone(),
                             !lang.contains("nopreamble"),
+                            hide_lines.map(|s| s.to_owned()),
                         );
                         let file = file.to_str().unwrap();
 
@@ -172,9 +190,9 @@ fn process_chapter(
                 }
                 None => new_events.push(event),
             },
-            Event::Code(code) if settings.highlight_inline() => {
-                new_events.push(Event::InlineHtml(highlight(code.as_ref(), true).into()))
-            }
+            Event::Code(code) if settings.highlight_inline() => new_events.push(Event::InlineHtml(
+                highlight(code.as_ref(), true, None).into(),
+            )),
             Event::Text(ref s) => match current_codeblock {
                 Some((_, ref mut text)) => {
                     text.push_str(s);
@@ -259,7 +277,7 @@ fn is_typst_codeblock(s: &str) -> bool {
     s.contains("typ") || s.contains("typst")
 }
 
-fn highlight(src: &str, inline: bool) -> String {
+fn highlight(src: &str, inline: bool, hide_lines: Option<&str>) -> String {
     let src = src.strip_suffix('\n').unwrap_or(src);
 
     let syntax = SYNTAX.syntaxes().last().unwrap();
@@ -270,14 +288,26 @@ fn highlight(src: &str, inline: bool) -> String {
         let html = styled_line_to_highlighted_html(&regs[..], IncludeBackground::No).unwrap();
         format!(r#"<code class="hljs">{}</code>"#, html)
     } else {
-        let mut html = r#"<pre style="margin: 0"><code class="language-typ hljs">"#.into();
+        let mut html = r#"<pre style="margin: 0"><code class="language-typ hljs">"#.to_owned();
 
         let mut highlighter = HighlightLines::new(syntax, &THEME);
 
         for line in LinesWithEndings::from(src) {
-            let regions = highlighter.highlight_line(line, &SYNTAX).unwrap();
+            let (line, is_hidden): (CowStr, bool) = match hide_lines {
+                Some(hide_marker) if line.trim_start().starts_with(hide_marker) => {
+                    html.push_str("<span class=\"boring\">");
+                    (line.replacen(hide_marker, "", 1).into(), true)
+                }
+                _ => (line.into(), false),
+            };
+
+            let regions = highlighter.highlight_line(line.as_ref(), &SYNTAX).unwrap();
             append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut html)
                 .unwrap();
+
+            if is_hidden {
+                html.push_str("</span>");
+            }
         }
 
         html.push_str("</code></pre>");
@@ -319,7 +349,22 @@ fn render_block(
     mut build_dir: PathBuf,
     name: String,
     preamble: bool,
+    hide_lines: Option<String>,
 ) -> (PathBuf, Option<impl Future<Output = ()>>) {
+    let src = if let Some(hide_marker) = hide_lines {
+        let mut result = String::with_capacity(src.len());
+        for line in src.split_inclusive('\n') {
+            if line.trim_start().starts_with(&hide_marker) {
+                result.push_str(&line.replacen(&hide_marker, "", 1));
+            } else {
+                result.push_str(line);
+            }
+        }
+        result
+    } else {
+        src
+    };
+
     let filename = sha256_hash(&src);
     let mut output = dir.clone();
     output.push("typst-img");
